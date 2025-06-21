@@ -1,17 +1,13 @@
-# app.py
 import os
 import json
-os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1'
-
-from googleapiclient.http import MediaIoBaseUpload
 import io
-
 from flask import Flask, redirect, request, session, jsonify
 from flask_cors import CORS
 from dotenv import load_dotenv
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import Flow
 from googleapiclient.discovery import build
+from googleapiclient.http import MediaIoBaseUpload
 from google.auth.transport.requests import Request, AuthorizedSession
 
 # Load .env variables
@@ -20,13 +16,19 @@ load_dotenv()
 # Flask setup
 app = Flask(__name__)
 app.secret_key = 'your_very_secret_key_here'  # Change this in production
+
+# ✅ Allow cross-site cookies for Render deployment
+app.config.update(
+    SESSION_COOKIE_SAMESITE='None',
+    SESSION_COOKIE_SECURE=True
+)
+
 CORS(app, supports_credentials=True)
 
 # OAuth2 config
 CLIENT_SECRET_FILE = os.getenv("CLIENT_SECRET_FILE", "client_secret.json")
 SCOPES = os.getenv("SCOPES").split()
 REDIRECT_URI = os.getenv("REDIRECT_URI", "http://localhost:5000/oauth2callback")
-
 
 @app.route("/")
 def home():
@@ -71,8 +73,8 @@ def list_files():
     drive_service = build('drive', 'v3', credentials=creds)
 
     results = drive_service.files().list(
-        pageSize=100,  # 🔁 Increase to fetch more files
-        fields="files(id, name, mimeType, modifiedTime, size, parents)"  # ✅ Added `parents`
+        pageSize=100,
+        fields="files(id, name, mimeType, modifiedTime, size, parents)"
     ).execute()
 
     return jsonify(results.get('files', []))
@@ -90,7 +92,6 @@ def get_shared_files():
             q="sharedWithMe = true",
             fields="files(id, name, mimeType, modifiedTime, size, parents)"
         ).execute()
-
         return jsonify(results.get('files', []))
     except Exception as e:
         print("❌ Error fetching shared files:", e)
@@ -176,7 +177,6 @@ def get_files_in_folder(folder_id):
 
     return jsonify(results.get('files', []))
 
-
 @app.route("/storage")
 def storage_info():
     if 'credentials' not in session:
@@ -197,8 +197,6 @@ def get_user():
         return 'Unauthorized', 401
 
     creds_data = session['credentials']
-    print("📦 Session credentials loaded:", creds_data)
-
     creds = Credentials(
         token=creds_data['token'],
         refresh_token=creds_data.get('refresh_token'),
@@ -219,7 +217,6 @@ def get_user():
             'client_secret': creds.client_secret,
             'scopes': creds.scopes
         }
-        print("✅ Token refreshed and session updated.")
 
     try:
         authed_session = AuthorizedSession(creds)
@@ -236,7 +233,7 @@ def get_user():
     except Exception as e:
         print("❌ Error accessing Google API:", e)
         return 'Unauthorized', 401
-    
+
 @app.route("/delete/<file_id>", methods=["DELETE"])
 def delete_file(file_id):
     if 'credentials' not in session:
@@ -252,7 +249,7 @@ def delete_file(file_id):
         print("❌ Error deleting file:", e)
         return jsonify({"status": "error", "message": str(e)}), 500
 
-@app.route('/upload', methods=['POST'])
+@app.route("/upload", methods=["POST"])
 def upload_file():
     if 'credentials' not in session:
         return jsonify({'error': 'User not authenticated'}), 401
@@ -269,25 +266,16 @@ def upload_file():
 
     try:
         media = MediaIoBaseUpload(io.BytesIO(uploaded_file.read()), mimetype=uploaded_file.mimetype)
-        
-        # ✅ Ensure it gets placed into the root directory
-        file_metadata = {
-            'name': uploaded_file.filename,
-            'parents': ['root']
-        }
-
+        file_metadata = {'name': uploaded_file.filename, 'parents': ['root']}
         created_file = drive_service.files().create(
             body=file_metadata,
             media_body=media,
             fields='id'
         ).execute()
-
         return jsonify({'status': 'success', 'fileId': created_file.get('id')}), 200
-
     except Exception as e:
         print(f"Upload error: {e}")
         return jsonify({'error': 'Failed to upload file'}), 500
-
 
 @app.route("/logout")
 def logout():
